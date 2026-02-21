@@ -1,16 +1,21 @@
-from typing import TypedDict, Optional , Dict, Any
-class AgentState(TypedDict, total = False):
-    user_input : str 
-    # Supervisor Kararı 
-    next_node:Optional[str]
-    # Ulaşım(Sadece Uçuş)
+from typing import TypedDict, Optional, Dict, Any, List
+
+class AgentState(TypedDict, total=False):
+    user_input: str 
+    
+    # Supervisor Kararı Artık Bir LİSTE (Örn: ["transport", "search"])
+    next_nodes: Optional[List[str]]
+    
+    # Ulaşım (Sadece Uçuş)
     origin: Optional[str]
     destination: Optional[str]
     date: Optional[str]
 
     # Genel Arama 
     search_query: Optional[str]
-    # Araç Sonuçları ve Nihai Sonuçları
-    tool_result:Optional[Dict[str, Any]]
-    final_answer: Optional[str]
     
+    # --- YENİ DEĞİŞİKLİK: Her Aracın Kendi Hafıza Kutusu ---
+    transport_result: Optional[Dict[str, Any]]
+    search_result: Optional[Dict[str, Any]]
+    
+    final_answer: Optional[str]

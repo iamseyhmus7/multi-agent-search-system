@@ -1,27 +1,34 @@
 import json
+from datetime import datetime
 from core.gemini_client import generate_text
 from tools.web_search import search_web
 from tools.transport_search import search_transport
 from agents.state import AgentState
 
-async def supervisor_agent(state: AgentState) -> AgentState: # Dönüş tipi AgentState oldu
+async def supervisor_agent(state: AgentState) -> dict:
+    bugunun_tarihi = datetime.now().strftime("%Y-%m-%d")
+    mevcut_yil = datetime.now().year
+
     prompt = f"""
-    Sen bir Karar Verici (Router) ajansın. Kullanıcının girdisini analiz et ve eylemi seç.
+    Sen bir Karar Verici ajansın. Kullanıcının girdisini analiz et.
+    Tarih bağlamı: Bugün {bugunun_tarihi}. Yıl belirtilmezse tarihi {mevcut_yil} veya sonrasına göre hesapla. Geçmiş tarih oluşturma.
 
     Kullanıcı Girdisi: "{state['user_input']}"
 
-    KESİN KURALLAR:
-    1. "transport": Kullanıcı uçak bileti veya uçuş arıyorsa. 'origin' (IATA kodu), 'destination' (IATA kodu) ve 'date' (YYYY-MM-DD) çıkar.
-    2. "search": Kullanıcı hava durumu, haberler veya web'den bilgi soruyorsa. Mantıklı bir 'search_query' oluştur.
-    3. "responder": Kullanıcı sadece selam veriyorsa veya sistemde toplanmış bir veri varsa.
+    GÖREVLER:
+    Eğer kullanıcı hem uçuş hem de bilgi istiyorsa (Örn: "Bileti al ve gezilecek yerleri bul"), İKİSİNİ BİRDEN listeye ekle.
+
+    1. Uçak bileti veya uçuş isteniyorsa: Listeye "transport" ekle ve 'origin' (IATA), 'destination' (IATA), 'date' (YYYY-MM-DD) çıkar.
+    2. Güncel bilgi, hava durumu veya rehber isteniyorsa: Listeye "search" ekle ve 'search_query' oluştur.
+    3. Sadece basit bir sohbetse: Listeye sadece "responder" ekle.
 
     Sadece geçerli JSON döndür:
     {{
-        "next_node": "transport" | "search" | "responder",
+        "next_nodes": ["transport", "search"], 
         "origin": "IST", 
-        "destination": "ESB", 
-        "date": "2026-03-21",
-        "search_query": "İstanbul hava durumu"
+        "destination": "OTP", 
+        "date": "2026-02-23", 
+        "search_query": "Romanya'da gezilecek yerler"
     }}
     """
     
@@ -31,72 +38,67 @@ async def supervisor_agent(state: AgentState) -> AgentState: # Dönüş tipi Age
         cleaned = response.strip().strip("```json").strip("```")
         analysis = json.loads(cleaned)
         
-        print(f"🎯 Supervisor Kararı: {analysis.get('next_node', 'responder').upper()}")
+        print(f"🎯 Supervisor Kararı: {analysis.get('next_nodes')}")
         print(f"🔍 Çıkarılan Veriler: {analysis}")
         
-        # GARANTİ YÖNTEM: State'i doğrudan güncelle ve onu döndür
-        state["next_node"] = analysis.get("next_node", "responder")
-        state["origin"] = analysis.get("origin")
-        state["destination"] = analysis.get("destination")
-        state["date"] = analysis.get("date")
-        state["search_query"] = analysis.get("search_query", "")
-        
-        return state
+        return {
+            "next_nodes": analysis.get("next_nodes", ["responder"]),
+            "origin": analysis.get("origin", ""),
+            "destination": analysis.get("destination", ""),
+            "date": analysis.get("date", ""),
+            "search_query": analysis.get("search_query", "")
+        }
         
     except Exception as e:
-        print(f"⚠️ Supervisor JSON Hatası: {e}")
-        state["next_node"] = "responder"
-        return state
+        print(f"⚠️ Supervisor Hatası: {e}")
+        return {"next_nodes": ["responder"]}
 
-def search_agent(state: AgentState) -> AgentState: # Dönüş tipi AgentState oldu
+def search_agent(state: AgentState) -> dict:
     query = state.get("search_query", "") 
     print(f"🔎 Tavily Arama Yapıyor: '{query}'")
     
     if not query:
         print("⚠️ Hata: Arama sorgusu boş geldi!")
-        state["tool_result"] = {"error": "Arama sorgusu boş."}
-        return state
+        return {"search_result": {"error": "Sorgu boş."}}
         
     try:
         result = search_web(query)
-        print("📦 Tavily Sonucu Başarıyla Alındı!")
-        state["tool_result"] = result
-        return state
+        print("📦 Tavily Sonucu Alındı!")
+        return {"search_result": result}
     except Exception as e:
         print(f"❌ Tavily API Hatası: {e}")
-        state["tool_result"] = {"error": f"Tavily API Hatası: {e}"}
-        return state
+        return {"search_result": {"error": str(e)}}
 
-async def transport_agent(state: AgentState) -> AgentState:
+async def transport_agent(state: AgentState) -> dict:
     print(f"✈️ Amadeus Aranıyor: {state.get('origin')} -> {state.get('destination')} | {state.get('date')}")
     result = await search_transport(
-        "flight",
-        state.get("origin"),
-        state.get("destination"),
-        state.get("date")
+        "flight", state.get("origin"), state.get("destination"), state.get("date")
     )
-    print(f"📦 Amadeus Sonucu: {result}")
-    state["tool_result"] = result
-    return state
+    print(f"📦 Amadeus Sonucu Alındı!")
+    return {"transport_result": result}
 
-async def responder_agent(state: AgentState) -> AgentState:
+async def responder_agent(state: AgentState) -> dict:
     print("💬 Yanıtlayıcı Cevabı Hazırlıyor...")
-    tool_data = state.get("tool_result", "")
+    
+    # İki farklı kaynaktan gelen verileri birleştiriyoruz
+    sistem_verisi = f"""
+    UÇUŞ VERİLERİ (Amadeus):
+    {state.get('transport_result', 'Uçuş araması yapılmadı.')}
+    
+    WEB ARAMA VERİLERİ (Tavily):
+    {state.get('search_result', 'Web araması yapılmadı.')}
+    """
     
     prompt = f"""
-    Sen uygulamanın son yanıtlayıcı ajanısın.
+    Sen son yanıtlayıcı ajansın. SADECE aşağıdaki Sistem Verilerini kullanarak cevap ver. Kendi hafızandan bilgi uydurma. Veriler "error" içeriyorsa veya "yapılmadı" diyorsa durumu kullanıcıya açıkla.
     
-    Sistem Verisi:
-    {tool_data}
+    Sistem Verileri:
+    {sistem_verisi}
     
     Kullanıcı Sorusu:
     {state.get("user_input")}
-    
-    Lütfen Sistem Verisi'ni kullanarak kullanıcıya samimi ve düzenli bir cevap ver. Veri "error" içeriyorsa durumu açıkla.
     """
     
     final_answer = await generate_text(prompt)
-    # \n karakterlerini ve ** gibi Markdown sembollerini temizle
     clean_answer = final_answer.replace("\n", " ").replace("**", "")
-    state["final_answer"] = clean_answer
-    return state
+    return {"final_answer": clean_answer}

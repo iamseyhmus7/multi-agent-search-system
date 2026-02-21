@@ -1,14 +1,22 @@
 from tools.amadeus_client import search_flights
 
-
 async def amadeus_flight_provider(origin, destination, date):
-
     try:
         raw_data = await search_flights(origin, destination, date)
+        # 🚨 İŞTE BURASI! AMADEUS BİZE NE DİYOR GÖRELİM:
+        print(f"🚨 AMADEUS HAM CEVAP: {raw_data}") 
+        
     except Exception as e:
+        print(f"❌ Amadeus Bağlantı Hatası: {e}")
         return []
 
-    if "data" not in raw_data:
+    # Eğer cevapta 'errors' diye bir şey varsa API key veya tarih hatasıdır
+    if "errors" in raw_data:
+        print(f"❌ Amadeus API Hatası: {raw_data['errors']}")
+        return []
+
+    if "data" not in raw_data or not raw_data["data"]:
+        print("⚠️ Amadeus 'data' bulamadı veya boş döndü.")
         return []
 
     results = []

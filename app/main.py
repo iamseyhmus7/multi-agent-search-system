@@ -6,5 +6,6 @@ app = FastAPI()
 @app.post("/chat")
 async def chat(payload: dict):
     user_input = payload.get("message")
-    answer = run_agent(user_input)
+    # run_agent artık async olduğu için await eklemeliyiz
+    answer = await run_agent(user_input) 
     return {"response": answer}
