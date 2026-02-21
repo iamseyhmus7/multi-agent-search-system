@@ -1,8 +1,16 @@
-from typing import TypedDict, Optional, Dict, Any
+from typing import TypedDict, Optional , Dict, Any
+class AgentState(TypedDict, total = False):
+    user_input : str 
+    # Supervisor Kararı 
+    next_node:Optional[str]
+    # Ulaşım(Sadece Uçuş)
+    origin: Optional[str]
+    destination: Optional[str]
+    date: Optional[str]
 
-class AgentState(TypedDict):
-    user_input: str
-    intent: Optional[str]
-    search_query: Optional[str]  # <-- İŞTE EKSİK OLAN SİHİRLİ SATIR BURASI
-    tool_result: Optional[Dict[str, Any]]
+    # Genel Arama 
+    search_query: Optional[str]
+    # Araç Sonuçları ve Nihai Sonuçları
+    tool_result:Optional[Dict[str, Any]]
     final_answer: Optional[str]
+    

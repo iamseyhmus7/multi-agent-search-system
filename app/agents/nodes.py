@@ -1,76 +1,102 @@
-from core.gemini_client import generate_text
-from tools.web_search import search_web
-from agents.state import AgentState
-
-
 import json
 from core.gemini_client import generate_text
+from tools.web_search import search_web
+from tools.transport_search import search_transport
 from agents.state import AgentState
 
-def intent_detection(state: AgentState) -> AgentState:
+async def supervisor_agent(state: AgentState) -> AgentState: # Dönüş tipi AgentState oldu
     prompt = f"""
-    Sen akıllı bir sorgu analizatörüsün. Kullanıcının girdisini analiz et ve aşağıdaki JSON formatında yanıt ver.
-    
-    Görevlerin:
-    1. 'intent': Bu girdi bir bilgi arayışı mı ('search') yoksa genel bir sohbet mi ('general')?
-    2. 'search_query': Eğer intent 'search' ise, arama motorundan en iyi sonucu almak için bu sorguyu yeniden yaz. 
-       - Arama motorlarının anlayacağı net anahtar kelimeler kullan.
-    
+    Sen bir Karar Verici (Router) ajansın. Kullanıcının girdisini analiz et ve eylemi seç.
+
     Kullanıcı Girdisi: "{state['user_input']}"
-    
-    Sadece aşağıdaki formatta geçerli bir JSON dön, başka hiçbir açıklama yapma:
+
+    KESİN KURALLAR:
+    1. "transport": Kullanıcı uçak bileti veya uçuş arıyorsa. 'origin' (IATA kodu), 'destination' (IATA kodu) ve 'date' (YYYY-MM-DD) çıkar.
+    2. "search": Kullanıcı hava durumu, haberler veya web'den bilgi soruyorsa. Mantıklı bir 'search_query' oluştur.
+    3. "responder": Kullanıcı sadece selam veriyorsa veya sistemde toplanmış bir veri varsa.
+
+    Sadece geçerli JSON döndür:
     {{
-        "intent": "search",
-        "search_query": "Galatasaray last match results"
+        "next_node": "transport" | "search" | "responder",
+        "origin": "IST", 
+        "destination": "ESB", 
+        "date": "2026-03-21",
+        "search_query": "İstanbul hava durumu"
     }}
     """
     
-    response = generate_text(prompt)
+    response = await generate_text(prompt)
     
     try:
-        # LLM'den gelen JSON'ı parse et (Eğer model başında/sonunda markdown ```json kullanırsa temizlemek gerekebilir)
-        cleaned_response = response.strip().strip('```json').strip('```')
-        analysis = json.loads(cleaned_response)
+        cleaned = response.strip().strip("```json").strip("```")
+        analysis = json.loads(cleaned)
         
-        state["intent"] = analysis.get("intent", "general").lower()
-        state["search_query"] = analysis.get("search_query", state["user_input"])
+        print(f"🎯 Supervisor Kararı: {analysis.get('next_node', 'responder').upper()}")
+        print(f"🔍 Çıkarılan Veriler: {analysis}")
         
-    except json.JSONDecodeError:
-        # JSON parse hatası olursa varsayılan (fallback) davranış
-        state["intent"] = "search" if "search" in response.lower() else "general"
-        state["search_query"] = state["user_input"]
+        # GARANTİ YÖNTEM: State'i doğrudan güncelle ve onu döndür
+        state["next_node"] = analysis.get("next_node", "responder")
+        state["origin"] = analysis.get("origin")
+        state["destination"] = analysis.get("destination")
+        state["date"] = analysis.get("date")
+        state["search_query"] = analysis.get("search_query", "")
         
-    return state
+        return state
+        
+    except Exception as e:
+        print(f"⚠️ Supervisor JSON Hatası: {e}")
+        state["next_node"] = "responder"
+        return state
 
-def tool_execution(state:AgentState) -> AgentState:
-    # Kullanıcının ham metnini değil, LLM'in düzelttiği (örn: Galatasaray içeren) sorguyu ara
-    query_to_search = state.get("search_query", state["user_input"])
-    result = search_web(query_to_search)
+def search_agent(state: AgentState) -> AgentState: # Dönüş tipi AgentState oldu
+    query = state.get("search_query", "") 
+    print(f"🔎 Tavily Arama Yapıyor: '{query}'")
+    
+    if not query:
+        print("⚠️ Hata: Arama sorgusu boş geldi!")
+        state["tool_result"] = {"error": "Arama sorgusu boş."}
+        return state
+        
+    try:
+        result = search_web(query)
+        print("📦 Tavily Sonucu Başarıyla Alındı!")
+        state["tool_result"] = result
+        return state
+    except Exception as e:
+        print(f"❌ Tavily API Hatası: {e}")
+        state["tool_result"] = {"error": f"Tavily API Hatası: {e}"}
+        return state
+
+async def transport_agent(state: AgentState) -> AgentState:
+    print(f"✈️ Amadeus Aranıyor: {state.get('origin')} -> {state.get('destination')} | {state.get('date')}")
+    result = await search_transport(
+        "flight",
+        state.get("origin"),
+        state.get("destination"),
+        state.get("date")
+    )
+    print(f"📦 Amadeus Sonucu: {result}")
     state["tool_result"] = result
     return state
 
-def final_response(state: AgentState) -> AgentState:
-    if state["intent"] == "search":
-        results = state["tool_result"]["results"]
-        formatted_context = ""
-        for r in results:
-            formatted_context += f"Title: {r['title']}\n"
-            formatted_context += f"Content: {r['content']}\n\n"
-        prompt = f"""
-You are a factual AI assistant.
-
-ONLY use the information provided below.
-DO NOT use your own knowledge.
-If the answer is not in the search results, say you don't know.
-
-SEARCH RESULTS:
-{formatted_context}
-USER QUESTION:
-{state["user_input"]}
-Provide a clear and concise answer.
-"""
-    else:
-        prompt = state["user_input"]
+async def responder_agent(state: AgentState) -> AgentState:
+    print("💬 Yanıtlayıcı Cevabı Hazırlıyor...")
+    tool_data = state.get("tool_result", "")
     
-    state["final_answer"] = generate_text(prompt)
+    prompt = f"""
+    Sen uygulamanın son yanıtlayıcı ajanısın.
+    
+    Sistem Verisi:
+    {tool_data}
+    
+    Kullanıcı Sorusu:
+    {state.get("user_input")}
+    
+    Lütfen Sistem Verisi'ni kullanarak kullanıcıya samimi ve düzenli bir cevap ver. Veri "error" içeriyorsa durumu açıkla.
+    """
+    
+    final_answer = await generate_text(prompt)
+    # \n karakterlerini ve ** gibi Markdown sembollerini temizle
+    clean_answer = final_answer.replace("\n", " ").replace("**", "")
+    state["final_answer"] = clean_answer
     return state
