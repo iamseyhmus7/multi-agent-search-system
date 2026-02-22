@@ -1,11 +1,25 @@
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from services.agent_service import run_agent
 
 app = FastAPI()
 
-@app.post("/chat")
+# Gerçek bir stream deneyimi için backend'in tek bir JSON dönmemeli; 
+# kelimeleri üretildikçe düz metin (plain text) olarak parça parça dışarı tükürmelidir.
+@app.post("/chat") 
 async def chat(payload: dict):
     user_input = payload.get("message")
-    # run_agent artık async olduğu için await eklemeliyiz
-    answer = await run_agent(user_input) 
-    return {"response": answer}
+    
+    # Kelimeleri parça parça gönderecek olan jeneratör fonksiyonumuz
+    async def generate_response():
+        # run_agent artık tüm metni tek seferde dönmek yerine,
+        # kelimeleri/cümleleri parça parça "yield" ile fırlatmalı.
+        async for chunk in run_agent(user_input):
+            # Eğer chunk dict/json formatındaysa onu sadece string'e çevirip gönderiyoruz
+            if isinstance(chunk, dict) and "response" in chunk:
+                yield chunk["response"]
+            else:
+                yield str(chunk)
+
+    # Cevabı JSON olarak değil, akan bir metin (stream) olarak döndürüyoruz
+    return StreamingResponse(generate_response(), media_type="text/plain")
