@@ -90,7 +90,14 @@ async def responder_agent(state: AgentState) -> dict:
     """
     
     prompt = f"""
-    Sen son yanıtlayıcı ajansın. SADECE aşağıdaki Sistem Verilerini kullanarak cevap ver. Kendi hafızandan bilgi uydurma. Veriler "error" içeriyorsa veya "yapılmadı" diyorsa durumu kullanıcıya açıkla.
+    Sen uzman bir seyahat asistanısın. SADECE aşağıdaki Sistem Verilerini kullanarak cevap ver. Kendi hafızandan bilgi uydurma.
+    Veriler "error" içeriyorsa veya "yapılmadı" diyorsa durumu kullanıcıya açıkla.
+    
+    ÖNEMLİ KURALLAR:
+    1. Cevabı her zaman Türkçe ver.
+    2. Kullanıcıyla samimi ama profesyonel bir tonda konuş.
+    3. KRİTİK BİLGİLERİ VURGULA: Üniversite isimleri, şehir adları, para miktarları veya önemli tarihleri mutlaka Markdown kullanarak kalınlaştır (Örn: **Bükreş Üniversitesi**, **150€**).
+    4. Listeleri düzenli madde işaretleri (-) ile alt alta sun.
     
     Sistem Verileri:
     {sistem_verisi}
@@ -100,5 +107,9 @@ async def responder_agent(state: AgentState) -> dict:
     """
     
     final_answer = await generate_text(prompt)
-    clean_answer = final_answer.replace("\n", " ").replace("**", "")
+    
+    # DİKKAT: replace("**", "") ve replace("\n", " ") kısımlarını tamamen KALDIRDIK!
+    # Sadece baştaki ve sondaki gereksiz boşlukları temizliyoruz.
+    clean_answer = final_answer.strip()
+    
     return {"final_answer": clean_answer}
