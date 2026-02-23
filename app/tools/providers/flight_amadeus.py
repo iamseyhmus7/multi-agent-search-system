@@ -28,6 +28,7 @@ async def amadeus_flight_provider(origin, destination, date):
 
             results.append({
                 "provider": "Amadeus",
+                "airline_code": segments[0]["carrierCode"], # 🌟 YENİ: Havayolu kodunu cebe koyduk!
                 "price": float(offer["price"]["total"]),
                 "currency": offer["price"]["currency"],
                 "departure_time": segments[0]["departure"]["at"],
@@ -35,7 +36,7 @@ async def amadeus_flight_provider(origin, destination, date):
                 "raw_duration": itinerary["duration"],
                 "segments_count": len(segments)
             })
-        except:
+        except Exception as e:
+            print(f"⚠️ Amadeus veri işleme hatası: {e}")
             continue
-
     return results
