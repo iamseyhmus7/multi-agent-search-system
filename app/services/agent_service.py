@@ -1,4 +1,3 @@
-#Ekranda kusursuz bir "daktilo" efekti yaratır ve LangGraph yapını hiç bozmaz. 
 import asyncio
 from agents.graph import build_graph
 
@@ -16,12 +15,23 @@ async def run_agent(user_input: str):
         "final_answer": "",
     }
 
-    # 1. Ajanların arka planda işini bitirmesini bekle (Ainvoke)
     result = await graph.ainvoke(initial_state)
     final_answer = result.get("final_answer", "Sistemden bir cevap alınamadı.")
 
-    # 2. Çıkan nihai cevabı kelime kelime fırlat (Yield)
-    # Bu döngü, mobil taraftaki o şelale (streaming) etkisini kusursuz yaratır.
-    for word in final_answer.split(" "):
-        yield word + " "
-        await asyncio.sleep(0.04)  # Kelimeler arası 40 milisaniye daktilo hızı (bunu zevkine göre değiştirebilirsin)
+    # 🌟 KRİTİK DÜZELTME: Şifreli kısmı normal metinden ayır!
+    if "###UCUSLAR###" in final_answer:
+        metin_kismi, json_kismi = final_answer.split("###UCUSLAR###")
+        
+        # 1. Normal metni (konuşmayı) daktilo gibi akıt
+        for word in metin_kismi.split(" "):
+            yield word + " "
+            await asyncio.sleep(0.04)
+            
+        # 2. JSON uçuş verisini TEK SEFERDE, bütün olarak gönder! (Bozulmaması için)
+        yield "###UCUSLAR###" + json_kismi
+        
+    else:
+        # Şifre yoksa her şeyi daktilo gibi akıt
+        for word in final_answer.split(" "):
+            yield word + " "
+            await asyncio.sleep(0.04)
