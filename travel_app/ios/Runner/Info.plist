@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Atlas Agent'a sesli soru sorabilmeniz için mikrofona ihtiyacımız var.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Sesinizi metne çevirebilmek için konuşma tanıma izni gereklidir.</string>
 </dict>
 </plist>

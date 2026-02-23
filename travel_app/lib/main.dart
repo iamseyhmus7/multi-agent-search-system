@@ -2,8 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+// 🌟 YENİ: Ses paketleri eklendi
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox('atlas_box'); 
+
   runApp(const SeyahatUygulamasi());
 }
 
@@ -25,21 +33,46 @@ class SeyahatUygulamasi extends StatelessWidget {
   }
 }
 
-// 1. MESAJ SINIFI
 class Mesaj {
   final String metin;
   final bool kullaniciMi;
+  final List<dynamic>? ucuslar; 
 
-  Mesaj({required this.metin, required this.kullaniciMi});
+  Mesaj({required this.metin, required this.kullaniciMi, this.ucuslar});
+
+  Map<String, dynamic> toJson() => {
+    'metin': metin,
+    'kullaniciMi': kullaniciMi,
+    'ucuslar': ucuslar,
+  };
+
+  factory Mesaj.fromJson(Map<String, dynamic> json) => Mesaj(
+    metin: json['metin'] ?? '',
+    kullaniciMi: json['kullaniciMi'] ?? false,
+    ucuslar: json['ucuslar'] != null ? List<dynamic>.from(json['ucuslar']) : null,
+  );
 }
 
-// 2. SOHBET OTURUMU SINIFI (YENİ!)
 class SohbetOturumu {
   final String id;
   String baslik;
   List<Mesaj> mesajlar;
 
   SohbetOturumu({required this.id, required this.baslik, required this.mesajlar});
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'baslik': baslik,
+    'mesajlar': mesajlar.map((m) => m.toJson()).toList(),
+  };
+
+  factory SohbetOturumu.fromJson(Map<String, dynamic> json) => SohbetOturumu(
+    id: json['id'] ?? '',
+    baslik: json['baslik'] ?? 'Yeni Rota',
+    mesajlar: json['mesajlar'] != null 
+        ? (json['mesajlar'] as List).map((m) => Mesaj.fromJson(Map<String, dynamic>.from(m))).toList()
+        : [],
+  );
 }
 
 class ChatEkrani extends StatefulWidget {
@@ -53,38 +86,114 @@ class _ChatEkraniState extends State<ChatEkrani> {
   final TextEditingController _mesajKontrolcusu = TextEditingController();
   final ScrollController _scrollKontrolcusu = ScrollController();
   
-  // 3. OTURUM YÖNETİMİ DEĞİŞKENLERİ
   List<SohbetOturumu> _gecmisSohbetler = [];
   late SohbetOturumu _aktifOturum;
   bool _yukleniyor = false;
+  
+  final _box = Hive.box('atlas_box');
+
+  // 🌟 YENİ: Ses Asistanı Değişkenleri
+  late stt.SpeechToText _speech;
+  bool _dinliyorMu = false;
+  late FlutterTts _flutterTts;
 
   @override
   void initState() {
     super.initState();
-    _yeniSohbetBaslat(ilkAcilis: true); // Uygulama ilk açıldığında boş bir oturum yarat
+    _verileriYukle(); 
+
+    // 🌟 YENİ: Ses Motorlarını Başlatıyoruz
+    _speech = stt.SpeechToText();
+    _flutterTts = FlutterTts();
+    _flutterTts.setLanguage("tr-TR"); // Türkçe
+    _flutterTts.setSpeechRate(0.3); // Doğal konuşma hızı
   }
 
-  // --- YENİ SOHBET AÇMA MANTIĞI ---
+  // 🌟 YENİ: Sesi Metne Çevir (Kullanıcı Konuştuğunda)
+  void _sesDinle() async {
+    if (!_dinliyorMu) {
+      bool musaitMi = await _speech.initialize(
+        onStatus: (durum) => print('Ses Durumu: $durum'),
+        onError: (hata) => print('Ses Hatası: $hata'),
+      );
+
+      if (musaitMi) {
+        setState(() => _dinliyorMu = true);
+        _speech.listen(
+          onResult: (sonuc) {
+            setState(() {
+              _mesajKontrolcusu.text = sonuc.recognizedWords;
+            });
+          },
+          localeId: "tr_TR",
+        );
+      }
+    } else {
+      setState(() => _dinliyorMu = false);
+      _speech.stop();
+    }
+  }
+
+  // 🌟 YENİ: Metni Sese Çevir (Yapay Zeka Cevap Verdiğinde)
+  Future<void> _sesliOku(String metin) async {
+    // Markdown işaretlerini (*, #) okumaması için temizliyoruz
+    String temizMetin = metin.replaceAll(RegExp(r'[#*]'), '');
+    if (temizMetin.contains("###UCUSLAR###")) {
+      temizMetin = temizMetin.split("###UCUSLAR###")[0]; // Uçuş JSON'ını okumasına engel oluyoruz
+    }
+    await _flutterTts.speak(temizMetin);
+  }
+
+  void _verileriKaydet() {
+    var gecmisJson = _gecmisSohbetler.map((oturum) => oturum.toJson()).toList();
+    var aktifJson = _aktifOturum.toJson();
+
+    _box.put('gecmisSohbetler', gecmisJson);
+    _box.put('aktifOturum', aktifJson);
+  }
+
+  void _verileriYukle() {
+    var kayitliGecmis = _box.get('gecmisSohbetler');
+    var kayitliAktif = _box.get('aktifOturum');
+
+    setState(() {
+      if (kayitliGecmis != null) {
+        _gecmisSohbetler = (kayitliGecmis as List)
+            .map((e) => SohbetOturumu.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+
+      if (kayitliAktif != null) {
+        _aktifOturum = SohbetOturumu.fromJson(Map<String, dynamic>.from(kayitliAktif));
+      } else {
+        _aktifOturum = SohbetOturumu(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          baslik: "Yeni Rota",
+          mesajlar: [],
+        );
+      }
+    });
+    _altaKaydir();
+  }
+
   void _yeniSohbetBaslat({bool ilkAcilis = false}) {
-    // Eğer mevcut sohbette mesaj varsa ve geçmiş listesinde yoksa, onu listeye ekleyerek kaydet
     if (!ilkAcilis && _aktifOturum.mesajlar.isNotEmpty && !_gecmisSohbetler.contains(_aktifOturum)) {
       _gecmisSohbetler.insert(0, _aktifOturum);
     }
 
     setState(() {
       _aktifOturum = SohbetOturumu(
-        id: DateTime.now().millisecondsSinceEpoch.toString(), // Benzersiz ID
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
         baslik: "Yeni Rota",
         mesajlar: [],
       );
     });
-
-    if (!ilkAcilis) Navigator.pop(context); // Menüden tıklandıysa menüyü kapat
+    
+    _verileriKaydet(); 
+    if (!ilkAcilis) Navigator.pop(context);
   }
 
-  // --- GEÇMİŞ SOHBETE TIKLAMA MANTIĞI ---
   void _eskiSohbeteGec(SohbetOturumu secilenOturum) {
-    // Geçiş yapmadan önce açık olan oturumu (eğer mesaj varsa) kaydet
     if (_aktifOturum.mesajlar.isNotEmpty && !_gecmisSohbetler.contains(_aktifOturum)) {
       _gecmisSohbetler.insert(0, _aktifOturum);
     }
@@ -93,8 +202,9 @@ class _ChatEkraniState extends State<ChatEkrani> {
       _aktifOturum = secilenOturum;
     });
     
-    Navigator.pop(context); // Menüyü kapat
-    _altaKaydir(); // Eski mesajları yükleyince en alta kaydır
+    Navigator.pop(context);
+    _verileriKaydet(); 
+    _altaKaydir();
   }
 
   void _altaKaydir() {
@@ -114,11 +224,10 @@ class _ChatEkraniState extends State<ChatEkrani> {
     if (gidenMesaj.isEmpty) return;
 
     setState(() {
-      // Eğer bu oturumdaki ilk mesajsa, başlığı kullanıcının mesajı yap ve sol menüye ekle!
       if (_aktifOturum.mesajlar.isEmpty) {
         _aktifOturum.baslik = gidenMesaj.length > 25 ? "${gidenMesaj.substring(0, 25)}..." : gidenMesaj;
         if (!_gecmisSohbetler.contains(_aktifOturum)) {
-          _gecmisSohbetler.insert(0, _aktifOturum); // Menüde en üste ekle
+          _gecmisSohbetler.insert(0, _aktifOturum);
         }
       }
 
@@ -126,6 +235,8 @@ class _ChatEkraniState extends State<ChatEkrani> {
       _mesajKontrolcusu.clear();
       _yukleniyor = true;
     });
+    
+    _verileriKaydet(); 
     _altaKaydir();
 
     int aiMesajIndex = _aktifOturum.mesajlar.length;
@@ -142,17 +253,47 @@ class _ChatEkraniState extends State<ChatEkrani> {
 
       setState(() { _yukleniyor = false; });
 
+      String toplananCevap = "";
+
       response.stream.transform(utf8.decoder).listen(
         (gelenParca) {
-          setState(() {
-            _aktifOturum.mesajlar[aiMesajIndex] = Mesaj(
-              metin: _aktifOturum.mesajlar[aiMesajIndex].metin + gelenParca,
-              kullaniciMi: false,
-            );
-          });
+          toplananCevap += gelenParca;
+
+          if (toplananCevap.contains("###UCUSLAR###")) {
+            var parcalar = toplananCevap.split("###UCUSLAR###");
+            String metinKismi = parcalar[0];
+            String jsonKismi = parcalar.length > 1 ? parcalar[1] : "";
+            
+            try {
+              List<dynamic> ucusListesi = jsonDecode(jsonKismi);
+              setState(() {
+                _aktifOturum.mesajlar[aiMesajIndex] = Mesaj(
+                  metin: metinKismi,
+                  kullaniciMi: false,
+                  ucuslar: ucusListesi, 
+                );
+              });
+            } catch (e) {
+              setState(() {
+                _aktifOturum.mesajlar[aiMesajIndex] = Mesaj(metin: metinKismi, kullaniciMi: false);
+              });
+            }
+          } else {
+            setState(() {
+              _aktifOturum.mesajlar[aiMesajIndex] = Mesaj(
+                metin: toplananCevap,
+                kullaniciMi: false,
+              );
+            });
+          }
           _altaKaydir();
         },
-        onDone: () { print("Akış bitti."); },
+        onDone: () { 
+          print("Akış bitti."); 
+          _verileriKaydet(); 
+          // 🌟 YENİ: Yapay zeka yazmayı bitirince, cevabı sesli olarak oku!
+          _sesliOku(_aktifOturum.mesajlar[aiMesajIndex].metin);
+        },
         onError: (hata) {
           setState(() {
             _aktifOturum.mesajlar[aiMesajIndex] = Mesaj(metin: _aktifOturum.mesajlar[aiMesajIndex].metin + "\n[Bağlantı koptu]", kullaniciMi: false);
@@ -167,19 +308,17 @@ class _ChatEkraniState extends State<ChatEkrani> {
       _altaKaydir();
     }
   }
-
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       
-      // --- SOL MENÜ (Geçmiş Sohbetler) ---
       drawer: Drawer(
         backgroundColor: const Color(0xFF171717),
         child: Column(
           children: [
             const SizedBox(height: 50),
-            // Yeni Sohbet Butonu
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: ElevatedButton.icon(
@@ -203,7 +342,6 @@ class _ChatEkraniState extends State<ChatEkrani> {
               ),
             ),
             
-            // --- DİNAMİK GEÇMİŞ SOHBETLER LİSTESİ ---
             Expanded(
               child: _gecmisSohbetler.isEmpty
                   ? const Center(child: Text("Henüz bir sohbet yok", style: TextStyle(color: Colors.white38, fontSize: 13)))
@@ -222,7 +360,7 @@ class _ChatEkraniState extends State<ChatEkrani> {
                             maxLines: 1, 
                             overflow: TextOverflow.ellipsis,
                           ),
-                          tileColor: seciliMi ? const Color(0xFF262626) : Colors.transparent, // Seçili olanın arka planı hafif parlak
+                          tileColor: seciliMi ? const Color(0xFF262626) : Colors.transparent, 
                           onTap: () => _eskiSohbeteGec(oturum),
                         );
                       },
@@ -241,7 +379,6 @@ class _ChatEkraniState extends State<ChatEkrani> {
         ),
       ),
 
-      // ÜST BAR
       appBar: AppBar(
         elevation: 0,
         backgroundColor: Colors.white,
@@ -257,10 +394,8 @@ class _ChatEkraniState extends State<ChatEkrani> {
         ),
       ),
 
-      // ANA GÖVDE
       body: Column(
         children: [
-          // Aktif Oturumun Mesajlarını Göster
           Expanded(
             child: _aktifOturum.mesajlar.isEmpty
                 ? _bosEkranTasarimi()
@@ -283,7 +418,6 @@ class _ChatEkraniState extends State<ChatEkrani> {
               ),
             ),
 
-          // MESAJ YAZMA KUTUSU
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
@@ -317,6 +451,22 @@ class _ChatEkraniState extends State<ChatEkrani> {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  
+                  // 🌟 YENİ: Mikrofon Butonu
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 2, right: 8),
+                    decoration: BoxDecoration(
+                      color: _dinliyorMu ? Colors.redAccent : const Color(0xFFF4F4F5), 
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: IconButton(
+                      icon: Icon(_dinliyorMu ? Icons.mic : Icons.mic_none, 
+                            color: _dinliyorMu ? Colors.white : Colors.black87, size: 22),
+                      onPressed: _sesDinle,
+                    ),
+                  ),
+
                   Container(
                     margin: const EdgeInsets.only(bottom: 2),
                     decoration: const BoxDecoration(color: Colors.black87, shape: BoxShape.circle),
@@ -380,30 +530,164 @@ class _ChatEkraniState extends State<ChatEkrani> {
               ),
               child: isUser
                   ? Text(mesaj.metin, style: const TextStyle(color: Colors.black87, fontSize: 16))
-                  : MarkdownBody(
-                      data: mesaj.metin,
-                      selectable: true,
-                      styleSheet: MarkdownStyleSheet(
-                        p: const TextStyle(color: Color(0xFF374151), fontSize: 16, height: 1.6),
-                        strong: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF111827), fontSize: 16),
-                        listBullet: const TextStyle(color: Color(0xFF3B82F6), fontSize: 18, fontWeight: FontWeight.bold),
-                        h1: const TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.w900),
-                        h2: const TextStyle(color: Colors.black, fontSize: 20, fontWeight: FontWeight.bold),
-                        blockquote: const TextStyle(color: Color(0xFF4B5563), fontStyle: FontStyle.italic),
-                        blockquoteDecoration: BoxDecoration(
-                          border: const Border(left: BorderSide(color: Color(0xFF3B82F6), width: 4)),
-                          color: const Color(0xFFEFF6FF),
-                          borderRadius: BorderRadius.circular(4),
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        MarkdownBody(
+                          data: mesaj.metin,
+                          selectable: true,
+                          styleSheet: MarkdownStyleSheet(
+                            p: const TextStyle(color: Color(0xFF374151), fontSize: 16, height: 1.6),
+                            strong: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF111827), fontSize: 16),
+                            listBullet: const TextStyle(color: Color(0xFF3B82F6), fontSize: 18, fontWeight: FontWeight.bold),
+                            h1: const TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.w900),
+                            h2: const TextStyle(color: Colors.black, fontSize: 20, fontWeight: FontWeight.bold),
+                            blockquote: const TextStyle(color: Color(0xFF4B5563), fontStyle: FontStyle.italic),
+                            blockquoteDecoration: BoxDecoration(
+                              border: const Border(left: BorderSide(color: Color(0xFF3B82F6), width: 4)),
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            code: const TextStyle(backgroundColor: Color(0xFFF3F4F6), color: Color(0xFFEF4444), fontFamily: 'monospace'),
+                            codeblockDecoration: BoxDecoration(
+                              color: const Color(0xFF1F2937),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
                         ),
-                        code: const TextStyle(backgroundColor: Color(0xFFF3F4F6), color: Color(0xFFEF4444), fontFamily: 'monospace'),
-                        codeblockDecoration: BoxDecoration(
-                          color: const Color(0xFF1F2937),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
+                        if (mesaj.ucuslar != null && mesaj.ucuslar!.isNotEmpty)
+                          ...mesaj.ucuslar!.map((ucus) => UcusKarti(
+                                havayolu: ucus['havayolu'] ?? 'Bilinmiyor',
+                                kalkisSaat: ucus['kalkisSaat'] ?? '00:00',
+                                varisSaat: ucus['varisSaat'] ?? '00:00',
+                                kalkisKod: ucus['kalkisKod'] ?? 'N/A',
+                                varisKod: ucus['varisKod'] ?? 'N/A',
+                                fiyat: ucus['fiyat'] ?? '₺0',
+                                tarih: ucus['tarih'] ?? '', 
+                              )).toList(),
+                      ],
                     ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class UcusKarti extends StatelessWidget {
+  final String havayolu;
+  final String kalkisSaat;
+  final String varisSaat;
+  final String kalkisKod;
+  final String varisKod;
+  final String fiyat;
+  final String tarih; 
+
+  const UcusKarti({
+    super.key,
+    required this.havayolu,
+    required this.kalkisSaat,
+    required this.varisSaat,
+    required this.kalkisKod,
+    required this.varisKod,
+    required this.fiyat,
+    required this.tarih, 
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.airlines, color: Color(0xFF3B82F6), size: 20),
+                      const SizedBox(width: 8),
+                      Text(havayolu, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(tarih, style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.w500)), 
+                ],
+              ),
+              Text(fiyat, style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF10B981), fontSize: 18)),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(kalkisSaat, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(kalkisKod, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      const Expanded(child: Divider(color: Colors.grey, thickness: 1.5)),
+                      Transform.rotate(
+                        angle: 1.57, 
+                        child: const Icon(Icons.flight, color: Color(0xFF3B82F6), size: 24),
+                      ),
+                      const Expanded(child: Divider(color: Colors.grey, thickness: 1.5)),
+                    ],
+                  ),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(varisSaat, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(varisKod, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                print("$havayolu seçildi!");
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEFF6FF),
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text("Bileti Seç", style: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
+            ),
+          )
         ],
       ),
     );
