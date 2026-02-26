@@ -88,21 +88,24 @@ async def responder_agent(state: AgentState) -> dict:
         try: transport_data = json.loads(transport_data)
         except: pass
 
-    # 🌟 KRİTİK DÜZELTME: Yapay zekanın çökmemesi için veriyi ikiye bölüyoruz!
-    # A) Yapay Zekanın Okuyacağı Kısa Özet (Sadece konuşması için)
-    llm_icin_ozet = "Uçuş araması yapılmadı."
-    # B) Flutter'ın Kart Çizeceği Detaylı Liste
+    llm_icin_ozet = "Uçuş araması YAPILMADI."
     ucus_listesi = []
     
-    if isinstance(transport_data, dict):
-        # Sadece "summary" kısmını LLM'e veriyoruz, böylece anında cevap üretiyor!
+    if isinstance(transport_data, dict) and transport_data: # Veri boş değilse
         llm_icin_ozet = transport_data.get("summary", "Uçuşlar bulundu, bilet detayları kartlardadır.")
         ucus_listesi = transport_data.get("all_options", [])
-    elif isinstance(transport_data, list):
+    elif isinstance(transport_data, list) and transport_data:
         llm_icin_ozet = f"Kullanıcı için {len(transport_data)} adet uçuş seçeneği bulundu."
         ucus_listesi = transport_data
 
-    # 2. LLM'e Sor (Sadece kısa özeti gönderiyoruz)
+    # 🌟 KRİTİK DÜZELTME: DİNAMİK KURAL MANTIĞI
+    # LLM'in kafasının karışmaması için kuralları duruma göre veriyoruz.
+    ucus_kurali = ""
+    if ucus_listesi:
+        ucus_kurali = "1. Uçuş listesini detaylı metin olarak YAZMA! Ben onları görsel kartlarla göstereceğim, sen sadece genel bilgi ver (Örn: 'Şu fiyattan başlayan biletler buldum, detayları aşağıda görebilirsiniz')."
+    else:
+        ucus_kurali = "1. DİKKAT: Kullanıcı uçuş veya bilet İSTEMEDİ. Bu yüzden KESİNLİKLE uçuşlardan, biletlerden, görsel kartlardan veya seyahat hazırlığından BAHSETME! Sadece sorulan soruya odaklan."
+
     sistem_verisi = f"""
     UÇUŞ ÖZETİ:
     {llm_icin_ozet}
@@ -112,10 +115,13 @@ async def responder_agent(state: AgentState) -> dict:
     """
     
     prompt = f"""
-    Sen uzman bir seyahat asistanısın. SADECE Sistem Verilerini kullanarak cevap ver.
+    Sen akıllı ve yardımsever bir asistansın. SADECE Sistem Verilerini kullanarak cevap ver. Hayal gücünü kullanma.
+    
     ÖNEMLİ KURALLAR:
-    1. Uçuş listesini detaylı metin olarak YAZMA! Ben onları görsel kartlarla göstereceğim, sen sadece genel bilgi ver (Örn: "Şu fiyattan başlayan biletler buldum, detayları aşağıda görebilirsiniz").
-    2. Kullanıcıyla samimi konuş.
+    {ucus_kurali}
+    2. Kullanıcıyla doğal ve samimi konuş.
+    3. EĞER Sistem Verilerinde Hava Durumu bilgisi varsa veya kullanıcı bunu sorduysa, cevabının EN SONUNA şu formatta mutlaka gizli bir JSON şifresi ekle (boşluk bırakmadan):
+    ###HAVA_DURUMU###[{{"sehir": "Adana", "sicaklik": "22°C", "durum": "Güneşli", "tarih": "26 Şubat 2026"}}]
     
     Sistem Verileri:
     {sistem_verisi}
@@ -124,13 +130,13 @@ async def responder_agent(state: AgentState) -> dict:
     {state.get("user_input")}
     """
     
-    print("⏳ LLM'e istek gönderiliyor... (Sistem burada donuyorsa API'de sorun vardır)")
+    print("⏳ LLM'e istek gönderiliyor...")
     final_answer = await generate_text(prompt)
     print("✅ LLM'den cevap geldi!")
     
     clean_answer = final_answer.strip()
 
-    # 3. ŞİFRELİ UÇUŞ KARTI MANTIĞI (Flutter için)
+    # 3. UÇUŞ KARTI MANTIĞI (Sadece uçuş varsa çalışır)
     if ucus_listesi:
         flutter_ucuslar_listesi = []
         for i, flight in enumerate(ucus_listesi[:5]):  
@@ -138,7 +144,6 @@ async def responder_agent(state: AgentState) -> dict:
                 kalkis_tam = flight.get("departure_time", "00:00")
                 varis_tam = flight.get("arrival_time", "00:00")
                 
-                # Tarihi Güvenlice Al
                 ham_tarih = kalkis_tam.split("T")[0] if "T" in kalkis_tam else ""
                 if ham_tarih and "-" in ham_tarih:
                     yil, ay, gun = ham_tarih.split("-")
@@ -146,20 +151,17 @@ async def responder_agent(state: AgentState) -> dict:
                 else:
                     tarih_duzenli = "Belirtilmedi"
                 
-                # Saati Al
                 kalkis_saat = kalkis_tam.split("T")[-1][:5] if "T" in kalkis_tam else kalkis_tam
                 varis_saat = varis_tam.split("T")[-1][:5] if "T" in varis_tam else varis_tam
                 
-                # Fiyat
                 fiyat = flight.get("price", "0")
                 para_birimi = flight.get("currency", "EUR")
 
-                # Havayolu Eşleştirme
                 havayolu_kodu = flight.get("airline_code", "")
                 havayolu_sozlugu = {
                     "TK": "Türk Hava Yolları", "PC": "Pegasus", "A3": "Aegean Airlines",
                     "LH": "Lufthansa", "VF": "AJet", "RO": "TAROM", "XQ": "SunExpress",
-                    "LO": "LOT Polish Airlines" # Senin uçuşta LO çıkmıştı!
+                    "LO": "LOT Polish Airlines" 
                 }
                 havayolu_adi = havayolu_sozlugu.get(havayolu_kodu, f"{havayolu_kodu} Airlines") if havayolu_kodu else "Havayolu"
 
@@ -178,6 +180,6 @@ async def responder_agent(state: AgentState) -> dict:
         if flutter_ucuslar_listesi:
             json_str = json.dumps(flutter_ucuslar_listesi)
             clean_answer += f"###UCUSLAR###{json_str}"
-            print("🚀 ŞİFRE EKLENDİ! Flutter uçuş kartlarını çizecek!")
+            print("🚀 UÇUŞ ŞİFRESİ EKLENDİ!")
             
     return {"final_answer": clean_answer}
