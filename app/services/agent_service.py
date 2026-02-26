@@ -18,20 +18,37 @@ async def run_agent(user_input: str):
     result = await graph.ainvoke(initial_state)
     final_answer = result.get("final_answer", "Sistemden bir cevap alınamadı.")
 
-    # 🌟 KRİTİK DÜZELTME: Şifreli kısmı normal metinden ayır!
-    if "###UCUSLAR###" in final_answer:
-        metin_kismi, json_kismi = final_answer.split("###UCUSLAR###")
-        
-        # 1. Normal metni (konuşmayı) daktilo gibi akıt
-        for word in metin_kismi.split(" "):
-            yield word + " "
-            await asyncio.sleep(0.04)
-            
-        # 2. JSON uçuş verisini TEK SEFERDE, bütün olarak gönder! (Bozulmaması için)
-        yield "###UCUSLAR###" + json_kismi
-        
-    else:
-        # Şifre yoksa her şeyi daktilo gibi akıt
-        for word in final_answer.split(" "):
-            yield word + " "
-            await asyncio.sleep(0.04)
+    # 🌟 MANTIKLI SIRALAMA AYRIŞTIRICISI
+    ucus_var_mi = "###UCUSLAR###" in final_answer
+    hava_var_mi = "###HAVA_DURUMU###" in final_answer
+
+    # 1. ADIM: Saf Metni (Konuşma) Ayıkla ve Akıt
+    saf_metin = final_answer
+    if ucus_var_mi:
+        saf_metin = saf_metin.split("###UCUSLAR###")[0]
+    if hava_var_mi:
+        saf_metin = saf_metin.split("###HAVA_DURUMU###")[0]
+
+    for word in saf_metin.split(" "):
+        yield word + " "
+        await asyncio.sleep(0.04)
+
+    # 2. ADIM: Önce Hava Durumunu Gönder (Hiyerarşide Üstte)
+    if hava_var_mi:
+        try:
+            # Hava durumu JSON'ını diğerlerinden izole et
+            hava_parçası = final_answer.split("###HAVA_DURUMU###")[1]
+            if "###UCUSLAR###" in hava_parçası:
+                hava_parçası = hava_parçası.split("###UCUSLAR###")[0]
+            yield "###HAVA_DURUMU###" + hava_parçası
+        except: pass
+
+    # 3. ADIM: En Son Uçuş Bilgilerini Gönder
+    if ucus_var_mi:
+        try:
+            # Uçuş JSON'ını diğerlerinden izole et
+            ucus_parçası = final_answer.split("###UCUSLAR###")[1]
+            if "###HAVA_DURUMU###" in ucus_parçası:
+                ucus_parçası = ucus_parçası.split("###HAVA_DURUMU###")[0]
+            yield "###UCUSLAR###" + ucus_parçası
+        except: pass
