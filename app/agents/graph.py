@@ -1,45 +1,61 @@
 from langgraph.graph import StateGraph, END
 from agents.state import AgentState
-from agents.nodes import supervisor_agent, transport_agent, search_agent, responder_agent
+from agents.nodes import (
+    accommodation_agent,
+    supervisor_agent, 
+    transport_agent, 
+    search_agent, 
+    responder_agent,
+    vision_agent,    # 🌟 Yeni ekledik
+    currency_agent,  # 🌟 Yeni ekledik
+    accommodation_agent # 🌟 Yeni ekledik
+)
 
-# Supervisor'ın listesine göre sıradaki düğümü belirleyen fonksiyon
+# Supervisor'ın listesine göre sıradaki düğümü belirleyen "Akıllı Trafik Polisi"
 def route_next_steps(state: AgentState):
     nodes = state.get("next_nodes", [])
     
-    # Liste boşsa veya responder varsa direkt bitir
-    if not nodes or "responder" in nodes:
+    # Eğer gidilecek bir yer kalmadıysa veya responder sırası geldiyse bitir
+    if not nodes:
         return "responder"
-        
-    # Eğer ikisi de varsa, önce transport'a git, o bitince search'e geçeceğiz
-    if "transport" in nodes:
-        # Gidilen node'u listeden çıkaralım ki sonsuz döngü olmasın
-        state["next_nodes"].remove("transport")
-        return "transport"
-        
-    if "search" in nodes:
-        state["next_nodes"].remove("search")
-        return "search"
-        
-    return "responder"
+    
+    # 🌟 DİNAMİK MANTIK: Listenin en başındaki ilk ajana git
+    # (Hiyerarşi: Vision -> Transport/Search -> Currency)
+    next_node = nodes[0]
+    
+    # Gidilecek node'u listeden çıkaralım ki döngüye girmeyelim
+    state["next_nodes"].pop(0) 
+    
+    return next_node
 
 def build_graph():
     workflow = StateGraph(AgentState)
 
+    # 1. Düğümleri (Ajanları) Tanımlıyoruz
     workflow.add_node("supervisor", supervisor_agent)
     workflow.add_node("transport", transport_agent)
     workflow.add_node("search", search_agent)
+    workflow.add_node("accommodation", accommodation_agent) # 🌟 YENİ EKLENDİ
+    workflow.add_node("vision", vision_agent)     # 🌟 Yeni
+    workflow.add_node("currency", currency_agent) # 🌟 Yeni
     workflow.add_node("responder", responder_agent)
 
+    # 2. Giriş Noktası
     workflow.set_entry_point("supervisor")
 
-    # Supervisor'dan çıkışta dinamik yönlendirme
+    # 3. Koşullu Geçişler (Dinamik Yönlendirme)
+    # Supervisor karar verir, route_next_steps trafiği yönetir
     workflow.add_conditional_edges("supervisor", route_next_steps)
     
-    # Alt ajanlar işini bitirince TEKRAR yönlendirme kontrolüne girer 
-    # (Böylece transport bitince search'e, search bitince responder'a gider)
+    # 🌟 HER AJAN İŞİ BİTİNCE TRAFİK POLİSİNE TEKRAR SORAR
+    # Böylece vision bitince transport'a, o bitince responder'a geçebiliriz.
+    workflow.add_conditional_edges("accommodation", route_next_steps) # 🌟 YENİ EKLENDİ
+    workflow.add_conditional_edges("vision", route_next_steps)
     workflow.add_conditional_edges("transport", route_next_steps)
     workflow.add_conditional_edges("search", route_next_steps)
+    workflow.add_conditional_edges("currency", route_next_steps)
 
+    # 4. Final
     workflow.add_edge("responder", END)
 
     return workflow.compile()
