@@ -1,26 +1,46 @@
 import asyncio
+import logging
 from agents.graph import build_graph
 
+logger = logging.getLogger(__name__)
 graph = build_graph()
 
-async def run_agent(user_input: str):
+async def run_agent(user_input: str, image_input: str = None, chat_history: str = ""):    
     initial_state = {
         "user_input": user_input,
-        "next_node": None,
+        "image_input": image_input,  # 🌟 Görsel input'u state'e ekle
+        "chat_history": chat_history,
+        "next_nodes": [],  # Supervisor kararı
         "search_query": "",
         "origin": "",
         "destination": "",
         "date": "",
-        "tool_result": None,
+        "amount": 1.0,
+        "from_currency": "EUR",
+        "transport_result": {},
+        "search_result": {},
+        "currency_result": None,
+        "vision_result": None,
+        "accommodation_result": None,  # 🌟 Yeni: Otel arama sonuçları için alan
         "final_answer": "",
     }
 
     result = await graph.ainvoke(initial_state)
+    
+    # 🗐️ DEBUG: Supervisor'un ne karar verdiğini gör
+    supervisor_nodes = result.get("next_nodes", [])
+    currency_result = result.get("currency_result")
+    logger.info(f"🞯 Supervisor Kararı: {supervisor_nodes}")
+    logger.info(f"💰 Currency Result: {currency_result}")
+    
     final_answer = result.get("final_answer", "Sistemden bir cevap alınamadı.")
 
     # 🌟 MANTIKLI SIRALAMA AYRIŞTIRICISI
     ucus_var_mi = "###UCUSLAR###" in final_answer
     hava_var_mi = "###HAVA_DURUMU###" in final_answer
+    
+    # 🗐️ DEBUG: Değişkenleri kontrol et
+    logger.debug(f"🗐️ Final Answer Pattern: ucus={ucus_var_mi}, hava={hava_var_mi}")
 
     # 1. ADIM: Saf Metni (Konuşma) Ayıkla ve Akıt
     saf_metin = final_answer
