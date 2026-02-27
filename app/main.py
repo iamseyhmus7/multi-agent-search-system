@@ -9,12 +9,15 @@ app = FastAPI()
 @app.post("/chat") 
 async def chat(payload: dict):
     user_input = payload.get("message")
+    image_input = payload.get("image")  # 🖼️ Yeni: Base64 formatında görsel
+    # 🌟 YENİ EKLENEN KABLO: Geçmiş sohbeti (hafızayı) alıyoruz
+    chat_history = payload.get("chat_history", "")
     
     # Kelimeleri parça parça gönderecek olan jeneratör fonksiyonumuz
     async def generate_response():
         # run_agent artık tüm metni tek seferde dönmek yerine,
         # kelimeleri/cümleleri parça parça "yield" ile fırlatmalı.
-        async for chunk in run_agent(user_input):
+        async for chunk in run_agent(user_input, image_input, chat_history):
             # Eğer chunk dict/json formatındaysa onu sadece string'e çevirip gönderiyoruz
             if isinstance(chunk, dict) and "response" in chunk:
                 yield chunk["response"]
