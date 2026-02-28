@@ -2,13 +2,15 @@ from langgraph.graph import StateGraph, END
 from agents.state import AgentState
 from agents.nodes import (
     accommodation_agent,
+    gastronomy_agent,
     supervisor_agent, 
     transport_agent, 
     search_agent, 
     responder_agent,
     vision_agent,    # 🌟 Yeni ekledik
     currency_agent,  # 🌟 Yeni ekledik
-    accommodation_agent # 🌟 Yeni ekledik
+    accommodation_agent, # 🌟 Yeni ekledik
+    activity_agent,  # 🌟 Yeni ekledik
 )
 
 # Supervisor'ın listesine göre sıradaki düğümü belirleyen "Akıllı Trafik Polisi"
@@ -39,7 +41,8 @@ def build_graph():
     workflow.add_node("vision", vision_agent)     # 🌟 Yeni
     workflow.add_node("currency", currency_agent) # 🌟 Yeni
     workflow.add_node("responder", responder_agent)
-
+    workflow.add_node("activity", activity_agent)
+    workflow.add_node("gastronomy", gastronomy_agent)
     # 2. Giriş Noktası
     workflow.set_entry_point("supervisor")
 
@@ -54,7 +57,8 @@ def build_graph():
     workflow.add_conditional_edges("transport", route_next_steps)
     workflow.add_conditional_edges("search", route_next_steps)
     workflow.add_conditional_edges("currency", route_next_steps)
-
+    workflow.add_conditional_edges("activity", route_next_steps)
+    workflow.add_conditional_edges("gastronomy", route_next_steps)
     # 4. Final
     workflow.add_edge("responder", END)
 
