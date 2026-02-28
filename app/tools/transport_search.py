@@ -68,46 +68,94 @@ async def search_transport(transport_type, origin, destination, date):
     }
 
 
-# 🏨 YENİ VE GERÇEK: AMADEUS OTEL ARAMA FONKSİYONU
-async def search_hotels(city_code: str) -> list:
-    """Amadeus API üzerinden belirli bir şehirdeki otelleri getirir."""
-    logger.info(f"🏨 Amadeus API'den {city_code} için otel aranıyor...")
+# 🏨 V3 YÜKSELTMESİ: GERÇEK FİYATLI VE ÇOK SEÇENEKLİ AMADEUS OTEL ARAMASI
+async def search_hotels(city_code: str, check_in: str, check_out: str, adults: int = 1) -> list:
+    """Amadeus API üzerinden otellerin En Ucuz, Orta ve Premium oda fiyatlarını getirir."""
+    logger.info(f"🏨 Amadeus'tan {city_code} için çoklu oda seçenekli otel aranıyor...")
 
     try:
-        # 1. amadeus_client'dan taze token al
         token = await get_access_token()
-        
-        # 2. Amadeus Endpoint ve Parametreleri (Daha güvenli params kullanımı)
-        url = f"{BASE_URL}/v1/reference-data/locations/hotels/by-city"
-        params = {
-            "cityCode": city_code,
-            "radius": 5,
-            "radiusUnit": "KM"
-        }
         headers = {"Authorization": f"Bearer {token}"}
 
-        # 3. İstek At
+        # 1. AŞAMA: Şehirdeki Otel ID'lerini Bul
+        url_ids = f"{BASE_URL}/v1/reference-data/locations/hotels/by-city"
+        params_ids = {"cityCode": city_code, "radius": 5, "radiusUnit": "KM"}
+        
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, params=params, timeout=10.0)
-
-            if response.status_code != 200:
-                logger.error(f"❌ Amadeus Otel API Hatası ({response.status_code}): {response.text}")
+            resp_ids = await client.get(url_ids, headers=headers, params=params_ids, timeout=10.0)
+            if resp_ids.status_code != 200:
+                logger.error(f"❌ Otel ID Hatası: {resp_ids.text}")
+                return []
+            
+            # İlk 5 otelin ID'sini al
+            hotel_data = resp_ids.json().get("data", [])[:5]
+            hotel_ids = ",".join([h.get("hotelId") for h in hotel_data if h.get("hotelId")])
+            
+            if not hotel_ids:
                 return []
 
-            data = response.json()
+            # 2. AŞAMA: Bu ID'ler için Gerçek Fiyatları Çek (V3 API)
+            url_offers = f"{BASE_URL}/v3/shopping/hotel-offers"
+            params_offers = {
+                "hotelIds": hotel_ids,
+                "adults": adults,
+                "checkInDate": check_in,
+                "checkOutDate": check_out
+                # 🌟 KURAL İPTALİ: "bestRateOnly": "true" satırını SİLDİK. Artık tüm odalar gelecek!
+            }
+
+            resp_offers = await client.get(url_offers, headers=headers, params=params_offers, timeout=15.0)
+            if resp_offers.status_code != 200:
+                logger.error(f"❌ Otel Fiyat Hatası: {resp_offers.text}")
+                return []
+
+            offers_data = resp_offers.json().get("data", [])
             oteller = []
 
-            # İlk 5 oteli temizleyip listeye ekle
-            for item in data.get("data", [])[:5]:
-                oteller.append({
-                    "isim": item.get("name", "Bilinmeyen Otel"),
-                    "otel_kodu": item.get("hotelId", ""),
-                    "mesafe": f"{item.get('distance', {}).get('value', 'Bilinmiyor')} KM"
-                })
+            # 🌟 KURAL: En fazla 5 otel için döngüye gir
+            for hotel in offers_data[:5]:
+                h_info = hotel.get("hotel", {})
+                h_isim = h_info.get("name", "Bilinmeyen Otel")
+                
+                teklifler = hotel.get("offers", [])
+                if not teklifler:
+                    continue
 
-            logger.info(f"✅ {len(oteller)} adet gerçek otel başarıyla çekildi.")
+                # Teklifleri fiyata göre sırala (Küçükten büyüğe)
+                try:
+                    teklifler = sorted(teklifler, key=lambda x: float(x.get("price", {}).get("total", 0)))
+                except: pass
+
+                # 1. En Ucuz Oda (Kesin var)
+                en_ucuz = teklifler[0]
+                en_ucuz_fiyat = f"{en_ucuz.get('price', {}).get('total')} {en_ucuz.get('price', {}).get('currency')}"
+                en_ucuz_oda = en_ucuz.get('room', {}).get('typeEstimated', {}).get('category', 'Standart Oda')
+
+                otel_ozeti = {
+                    "Otel Adı": h_isim,
+                    "En Uygun Seçenek": f"{en_ucuz_oda} - {en_ucuz_fiyat}"
+                }
+
+                # 2. Premium / Lüks Oda (Eğer birden fazla teklif varsa en sondakini al)
+                if len(teklifler) > 1:
+                    en_pahali = teklifler[-1]
+                    if en_pahali.get("id") != en_ucuz.get("id"):
+                        en_pahali_fiyat = f"{en_pahali.get('price', {}).get('total')} {en_pahali.get('price', {}).get('currency')}"
+                        en_pahali_oda = en_pahali.get('room', {}).get('typeEstimated', {}).get('category', 'Premium Oda')
+                        otel_ozeti["Premium Seçenek"] = f"{en_pahali_oda} - {en_pahali_fiyat}"
+
+                # 3. Ortanca Oda (Eğer 3 veya daha fazla seçenek varsa aradan bir tane al)
+                if len(teklifler) > 2:
+                    ortanca = teklifler[len(teklifler) // 2]
+                    ortanca_fiyat = f"{ortanca.get('price', {}).get('total')} {ortanca.get('price', {}).get('currency')}"
+                    ortanca_oda = ortanca.get('room', {}).get('typeEstimated', {}).get('category', 'Gelişmiş Standart Oda')
+                    otel_ozeti["Orta Seçenek"] = f"{ortanca_oda} - {ortanca_fiyat}"
+
+                oteller.append(otel_ozeti)
+
+            logger.info(f"✅ {len(oteller)} adet çok seçenekli otel başarıyla çekildi.")
             return oteller
 
     except Exception as e:
-        logger.error(f"❌ Amadeus Otel Bağlantı Hatası: {e}")
+        logger.error(f"❌ Amadeus Otel V3 Hatası: {e}")
         return []
