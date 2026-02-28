@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -8,6 +9,7 @@ from tools.web_search import search_web
 from tools.transport_search import search_hotels, search_transport
 from tools.wikipedia import search_wikipedia
 from agents.state import AgentState
+from tools.activity_search import get_all_activities
 
 # 🌟 Logging Konfigürasyonu
 logging.basicConfig(
@@ -42,13 +44,16 @@ async def supervisor_agent(state: AgentState) -> dict:
     4. currency: Döviz, kur, para birimi çevirme veya "kaç TL" gibi sorularda ekle.
     5. responder: Her zaman listenin EN SONUNDA olmalı veya sohbetse tek başına seçilmeli.
     6. accommodation: Kullanıcı otel, konaklama, nerede kalınır, airbnb gibi yer arayışındaysa ekle.
+    7. activity: Kullanıcı müze, tur, konser, maç, etkinlik, "ne yapılır", "gezilecek yerler" soruyorsa KESİNLİKLE "activity" ekle.
+    8. gastronomy: Restoran, yemek, "ne yenir", "en iyi pizza", kafe veya mutfak kültürü sorularında ekle.
     [VERİ ÇIKARMA KURALLARI - ÇOK KRİTİK]
     [VERİ ÇIKARMA KURALLARI - ÇOK KRİTİK]
     - DÖVİZ (currency): Kullanıcının mesajındaki MİKTARI bul ve 'amount' alanına yaz (Örn: "75 Pound" -> 75.0). 
       ⚠️ PARA BİRİMİ KURALI: Kullanıcı ne derse desin (Pound, Sterlin, Dolar, Yen, Ruble vs.), sen bu kelimeyi KESİNLİKLE dünyaca geçerli 3 HARFLİ ISO KODUNA çevirip 'from_currency' alanına yazacaksın. (Örn: Pound -> GBP, Japon Yeni -> JPY, Euro -> EUR). Asla kelimenin kendisini yazma!
     - IATA KODLARI (transport): 'origin' ve 'destination' her zaman 3 HARFLİ IATA KODU olmalıdır (Örn: IST, FCO). Asla tam isim yazma!
     - TARİH: "Gelecek hafta", "Yarın" gibi ifadeleri bugüne ({bugunun_tarihi}) göre YYYY-MM-DD formatında kesin tarihe çevir.
-
+    - 🌟 OTEL TARİHLERİ VE KİŞİ SAYISI: Kullanıcı otele giriş yapacaksa 'check_in_date' (YYYY-MM-DD), çıkış yapacaksa 'check_out_date' (YYYY-MM-DD) formatında çıkar. Eğer kişi sayısı verilmişse 'adults' (sayı) olarak yaz, yoksa 1 bırak. (Örn: "15 Mayıs - 20 Mayıs" -> 2026-05-15, 2026-05-20)
+    - ŞEHİR ADI: Ticketmaster için hedefin TAM ADINI 'city_name' alanına yaz (Örn: "Paris", "Roma", "İstanbul").
     [ÇIKTI FORMATI]
     Aşağıdaki JSON şablonunu KULLANICI MESAJINA GÖRE DİNAMİK OLARAK DOLDUR. Şablondaki değerleri uydurma!
     Sadece geçerli bir JSON objesi döndür:
@@ -57,6 +62,10 @@ async def supervisor_agent(state: AgentState) -> dict:
         "origin": "",
         "destination": "",
         "date": "",
+        "check_in_date": "",
+        "check_out_date": "",
+        "adults": 1,
+        "city_name": "",
         "search_query": "",
         "amount": 0.0,
         "from_currency": ""
@@ -91,6 +100,9 @@ async def supervisor_agent(state: AgentState) -> dict:
             "origin": str(analysis.get("origin") or "").upper().strip(),
             "destination": str(analysis.get("destination") or "").upper().strip(),
             "date": str(analysis.get("date") or "").strip(),
+            "check_in_date": str(analysis.get("check_in_date") or "").strip(), # Yeni
+            "check_out_date": str(analysis.get("check_out_date") or "").strip(), # Yeni
+            "adults": int(analysis.get("adults") or 1), # Yeni
             "search_query": str(analysis.get("search_query") or "").strip(),
             "amount": amount_val,
             "from_currency": str(analysis.get("from_currency") or "EUR").upper().strip()
@@ -102,7 +114,55 @@ async def supervisor_agent(state: AgentState) -> dict:
     except Exception as e:
         logger.error(f"⚠️ Supervisor Genel Hatası: {e}")
         return {"next_nodes": ["responder"]}
+
+async def gastronomy_agent(state: AgentState) -> dict:
+    """Şehirdeki en iyi restoranları ve yerel lezzetleri bulur."""
+    logger.info("🍝 Gastronomy Agent devrede...")
     
+    city_name = state.get("city_name") or state.get("destination")
+    user_input = state.get("user_input", "")
+
+    if not city_name:
+        return {"gastronomy_result": "GİZLİ_TALİMAT: Kullanıcı yemek önerisi istiyor ama şehri bilmiyorum. Lütfen hangi şehir için restoran aradığını sor."}
+
+    logger.info(f"🍴 {city_name} için gastronomi rehberi hazırlanıyor...")
+    
+    try:
+        # 🌐 Tavily'yi "Gurme" modunda çalıştırıyoruz
+        from tools.web_search import search_web
+        query = f"best restaurants in {city_name} for {user_input} local food gems, top rated cafes and must-eat dishes with price range"
+        
+        # Senkron aramayı asenkron çalıştırıyoruz
+        result = await asyncio.to_thread(search_web, query)
+        
+        return {"gastronomy_result": result}
+    except Exception as e:
+        logger.error(f"❌ Gastronomi Ajanı Hatası: {e}")
+        return {"gastronomy_result": "Restoran bilgileri alınırken bir hata oluştu."}
+
+
+async def activity_agent(state: AgentState) -> dict:
+    """Şehirdeki müze, konser ve etkinlikleri bulur."""
+    logger.info("🎢 Activity Agent devrede...")
+    
+    city_name = state.get("city_name", "").strip()
+    check_in = state.get("check_in_date", "").strip()
+    check_out = state.get("check_out_date", "").strip()
+    
+    if not city_name:
+        return {"activity_result": "GİZLİ_TALİMAT: Kullanıcı etkinlik arıyor ancak HANGİ ŞEHİRDE olduğunu bilmiyorum. Etkinlikleri bulabilmem için ona hangi şehre gideceğini sor."}
+        
+    if not check_in or not check_out:
+        return {"activity_result": "GİZLİ_TALİMAT: Kullanıcı etkinlik arıyor ancak TARİHLER eksik. Konser ve maç takvimine bakabilmem için ona hangi tarihlerde orada olacağını sor."}
+        
+    try:
+        # ⚡ Paralel API çağrımızı yapıyoruz
+        sonuclar = await get_all_activities(city_name, check_in, check_out)
+        return {"activity_result": sonuclar}
+    except Exception as e:
+        logger.error(f"❌ Etkinlik Ajanı Hatası: {e}")
+        return {"activity_result": "Etkinlikler getirilirken hata oluştu."}
+
 def search_agent(state: AgentState) -> dict:
     """Web arama ve encyclopeadic bilgi kaynakları (Tavily + Wikipedia)"""
     query = state.get("search_query", "") 
@@ -170,21 +230,32 @@ async def accommodation_agent(state: AgentState) -> dict:
     
     destination = state.get("destination", "").upper().strip()
     
-    # 🛡️ EKSİK BİLGİ KONTROLÜ: Şehir yoksa LLM'e sor dedirt!
-    if len(destination) != 3:
-        logger.warning(f"⚠️ Otel araması için hedef şehir eksik: '{destination}'")
-        return {"accommodation_result": "GİZLİ_TALİMAT: Kullanıcıya otel bulabilmem için HANGİ ŞEHRE gideceğini doğal bir dille sor."}
+    # 🌟 YENİ: Otel arayışı için eklenecek yeni state verileri
+    check_in = state.get("check_in_date", "").strip()
+    check_out = state.get("check_out_date", "").strip()
+    adults = state.get("adults", 1)
+    
+    # 🛡️ EKSİK BİLGİ KONTROLÜ: Şehir, giriş veya çıkış tarihi yoksa LLM'e sor dedirt!
+    eksikler = []
+    if len(destination) != 3: eksikler.append("hangi şehre gideceği")
+    if not check_in: eksikler.append("otele giriş tarihi")
+    if not check_out: eksikler.append("otelden çıkış tarihi")
+    
+    if eksikler:
+        eksik_metni = ", ".join(eksikler)
+        logger.warning(f"⚠️ Otel araması için eksik bilgiler var: {eksik_metni}")
+        return {"accommodation_result": f"GİZLİ_TALİMAT: Kullanıcı otel arıyor ancak {eksik_metni} eksik. Gerçek oda fiyatlarını bulabilmem için ona eksik olan bu bilgileri (ve kaç kişi kalacaklarını) doğal bir dille sor."}
         
-    logger.info(f"🏨 Aranıyor: {destination} şehrindeki oteller...")
+    logger.info(f"🏨 Aranıyor: {destination} şehrindeki oteller ({check_in} -> {check_out} | {adults} Kişi)...")
     
     try:
-        # Gerçek Amadeus Otel API'sini çağırıyoruz
-        result = await search_hotels(destination)
+        # Gerçek Amadeus Otel API'sini çağırıyoruz (Yeni parametrelerle birlikte)
+        result = await search_hotels(destination, check_in, check_out, adults)
         
         if not result:
-            return {"accommodation_result": f"{destination} şehrinde şu an Amadeus sisteminde uygun otel bulunamadı."}
+            return {"accommodation_result": f"{destination} şehrinde belirtilen tarihlerde şu an Amadeus sisteminde uygun otel bulunamadı."}
             
-        logger.info("✅ Gerçek oteller başarıyla state'e aktarıldı!")
+        logger.info("✅ Gerçek fiyatlı oteller başarıyla state'e aktarıldı!")
         return {"accommodation_result": result}
         
     except Exception as e:
@@ -311,6 +382,7 @@ async def responder_agent(state: AgentState) -> dict:
     else:
         ucus_kurali = "1. DİKKAT: Uçuş araması yapılmadı. KESİNLİKLE uçuş veya biletlerden BAHSETME!"
 
+    gastronomy_data = state.get("gastronomy_result") or "Yemek sorgusu yapılmadı."
     # 2. Sistem Verisi Havuzu (Otel eklendi)
     sistem_verisi = f"""
     GÖRSEL ANALİZ: {vision_data}
@@ -318,7 +390,10 @@ async def responder_agent(state: AgentState) -> dict:
     OTEL BİLGİLERİ: {accommodation_data if not gizli_talimatlar else 'Eksik bilgi nedeniyle aranamadı.'}
     UÇUŞ ÖZETİ: {llm_icin_ozet}
     WEB/REHBER BİLGİLERİ: {search_str}
+    ETKİNLİKLER VE KONSERLER: {state.get("activity_result", "Aranmadı")}
+    RESTORAN VE MUTFAK REHBERİ: {gastronomy_data}    
     """
+    
     chat_history = state.get("chat_history", "")
     prompt = f"""
     Sen uzman ve yardımsever bir seyahat asistanısın. SADECE Sistem Verilerini kullanarak cevap ver.
