@@ -51,7 +51,7 @@ class Mesaj {
   final String metin;
   final bool kullaniciMi;
   final List<dynamic>? ucuslar;
-  final List<dynamic>? havaDurumu; // 🌟 YENİ: Hava Durumu verisi için eklendi
+  final List<dynamic>? havaDurumu;
   int? feedback; 
   final DateTime zaman;
 
@@ -59,7 +59,7 @@ class Mesaj {
     required this.metin,
     required this.kullaniciMi,
     this.ucuslar,
-    this.havaDurumu, // 🌟 Eklendi
+    this.havaDurumu,
     this.feedback,
     DateTime? zaman,
   }) : zaman = zaman ?? DateTime.now();
@@ -68,7 +68,7 @@ class Mesaj {
     'metin': metin,
     'kullaniciMi': kullaniciMi,
     'ucuslar': ucuslar,
-    'havaDurumu': havaDurumu, // 🌟 Eklendi
+    'havaDurumu': havaDurumu,
     'feedback': feedback,
     'zaman': zaman.toIso8601String(),
   };
@@ -82,7 +82,7 @@ class Mesaj {
       metin: json['metin'] ?? '',
       kullaniciMi: json['kullaniciMi'] ?? false,
       ucuslar: json['ucuslar'] != null ? List<dynamic>.from(json['ucuslar']) : null,
-      havaDurumu: json['havaDurumu'] != null ? List<dynamic>.from(json['havaDurumu']) : null, // 🌟 Eklendi
+      havaDurumu: json['havaDurumu'] != null ? List<dynamic>.from(json['havaDurumu']) : null,
       feedback: json['feedback'],
       zaman: parsedZaman,
     );
@@ -133,8 +133,7 @@ class _ChatEkraniState extends State<ChatEkrani> {
   late FlutterTts _flutterTts;
   
   Completer<void>? _apiCancelCompleter;
-  http.Client? _httpClient; // 🌟 YENİ EKLENDİ: Arka plan bağlantısını kesmek için
-  // 🌟 YENİ HALİ: Artık bir şehir için birden fazla resim (Liste) tutacağız.
+  http.Client? _httpClient; 
   final Map<String, List<String>> _sehirResimleri = {};
 
   @override
@@ -174,7 +173,6 @@ class _ChatEkraniState extends State<ChatEkrani> {
 
   Future<void> _sesliOku(String metin) async {
     String temizMetin = metin.replaceAll(RegExp(r'[#*]'), '');
-    // 🌟 DÜZELTME: Hem Uçuşları hem Hava Durumunu sesten gizle
     if (temizMetin.contains("###UCUSLAR###")) {
       temizMetin = temizMetin.split("###UCUSLAR###")[0]; 
     }
@@ -215,7 +213,6 @@ class _ChatEkraniState extends State<ChatEkrani> {
     }
   }
 
-  // 🌟 GÜNCELLENDİ: Unsplash'ten liste halinde 5 fotoğraf çekiyor
   Future<List<String>?> _sehirFotograflariGetir(String sehirAdi) async {
     if (_sehirResimleri.containsKey(sehirAdi)) {
       return _sehirResimleri[sehirAdi];
@@ -342,13 +339,16 @@ class _ChatEkraniState extends State<ChatEkrani> {
   }
 
   void _altaKaydir() {
-    Future.delayed(const Duration(milliseconds: 100), () {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollKontrolcusu.hasClients) {
-        _scrollKontrolcusu.animateTo(
-          _scrollKontrolcusu.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        Future.delayed(const Duration(milliseconds: 300), () {
+          debugPrint("🟦 DEBUG: Kaydırma işlemi başlatılıyor...");
+          _scrollKontrolcusu.animateTo(
+            _scrollKontrolcusu.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 800), 
+            curve: Curves.fastOutSlowIn,
+          );
+        });
       }
     });
   }
@@ -453,7 +453,8 @@ class _ChatEkraniState extends State<ChatEkrani> {
     });
     _verileriKaydet();
   }
-Future<void> _mesajGonder() async {
+
+  Future<void> _mesajGonder() async {
     String gidenMesaj = _mesajKontrolcusu.text.trim();
     if (gidenMesaj.isEmpty) return;
 
@@ -467,7 +468,7 @@ Future<void> _mesajGonder() async {
 
       _aktifOturum.mesajlar.add(Mesaj(metin: gidenMesaj, kullaniciMi: true));
       _mesajKontrolcusu.clear();
-      _yukleniyor = true; // 🔴 Butonu kırmızı "Durdur" simgesine çevirir
+      _yukleniyor = true; 
     });
     
     _verileriKaydet(); 
@@ -479,7 +480,7 @@ Future<void> _mesajGonder() async {
     });
 
     _apiCancelCompleter = Completer<void>();
-    _httpClient = http.Client(); // 🌟 Bağlantıyı özel bir istemci üzerinden açıyoruz
+    _httpClient = http.Client(); 
 
     try {
       var request = http.Request('POST', Uri.parse('http://10.0.2.2:8000/chat'));
@@ -488,8 +489,6 @@ Future<void> _mesajGonder() async {
 
       var response = await _httpClient!.send(request);
 
-      // 🛑 HATA BURADAYDI: Burada _yukleniyor'u false yapıyorduk. Artık sildik!
-
       String toplananCevap = "";
 
       response.stream.transform(utf8.decoder).listen(
@@ -497,12 +496,10 @@ Future<void> _mesajGonder() async {
           if (!(_apiCancelCompleter?.isCompleted ?? false)) {
             toplananCevap += gelenParca;
 
-            // 🌟 YENİ AKILLI VE GÜÇLÜ AYRIŞTIRICI (PARSER)
             String metinKismi = toplananCevap;
             List<dynamic>? ucusVerisi;
             List<dynamic>? havaVerisi;
 
-            // 1. Ana Metni Temizle (Ekrana JSON kodlarının sızmasını engeller)
             if (metinKismi.contains("###UCUSLAR###")) {
               metinKismi = metinKismi.split("###UCUSLAR###")[0];
             }
@@ -510,27 +507,22 @@ Future<void> _mesajGonder() async {
               metinKismi = metinKismi.split("###HAVA_DURUMU###")[0];
             }
 
-            // 2. UÇUŞ VERİSİNİ AYIKLA (Birden fazla uçuşu destekler)
             if (toplananCevap.contains("###UCUSLAR###")) {
               String ucusStr = toplananCevap.split("###UCUSLAR###")[1];
-              // Eğer ucusun arkasına hava durumu yapışmışsa, sadece uçuş kısmını kesip al!
               if (ucusStr.contains("###HAVA_DURUMU###")) {
                 ucusStr = ucusStr.split("###HAVA_DURUMU###")[0];
               }
-              try { ucusVerisi = jsonDecode(ucusStr); } catch (e) { debugPrint("Uçuş Çözümleme Hatası: $e"); }
+              try { ucusVerisi = jsonDecode(ucusStr); } catch (e) { debugPrint("Uçuş Çözümleme Hatası: ${e.runtimeType} - $e"); }
             }
 
-            // 3. HAVA DURUMU VERİSİNİ AYIKLA
             if (toplananCevap.contains("###HAVA_DURUMU###")) {
               String havaStr = toplananCevap.split("###HAVA_DURUMU###")[1];
-              // Eğer havanın arkasına uçuş yapışmışsa, sadece hava kısmını kesip al!
               if (havaStr.contains("###UCUSLAR###")) {
                 havaStr = havaStr.split("###UCUSLAR###")[0];
               }
               try { havaVerisi = jsonDecode(havaStr); } catch (e) { debugPrint("Hava Çözümleme Hatası: $e"); }
             }
 
-            // Ekrana Yansıt
             setState(() {
               _aktifOturum.mesajlar[aiMesajIndex] = Mesaj(
                 metin: metinKismi,
@@ -539,16 +531,15 @@ Future<void> _mesajGonder() async {
                 havaDurumu: havaVerisi,
               );
             });
-            _altaKaydir();
           }
         },
         onDone: () { 
           debugPrint("Akış bitti."); 
           if (mounted) {
-            setState(() { _yukleniyor = false; }); // 🟢 Akış bittiğinde butonu eski haline getir
+            setState(() { _yukleniyor = false; }); 
           }
           _verileriKaydet(); 
-          _sesliOku(_aktifOturum.mesajlar[aiMesajIndex].metin);
+          _altaKaydir(); 
         },
         onError: (hata) {
           if (mounted) {
@@ -558,7 +549,7 @@ Future<void> _mesajGonder() async {
             });
           }
         },
-        cancelOnError: true, // 🌟 Hata alırsan akışı anında kes
+        cancelOnError: true,
       );
     } catch (e) {
       if (mounted) {
@@ -608,6 +599,7 @@ Future<void> _mesajGonder() async {
               child: _gecmisSohbetler.isEmpty
                   ? const Center(child: Text("Henüz bir sohbet yok", style: TextStyle(color: Colors.white38, fontSize: 13)))
                   : ListView.builder(
+                      // 🌟 DÜZELTİLDİ: YAN MENÜDE CONTROLLER VE PHYSICS YOK!
                       padding: EdgeInsets.zero,
                       itemCount: _gecmisSohbetler.length,
                       itemBuilder: (context, index) {
@@ -676,7 +668,10 @@ Future<void> _mesajGonder() async {
             child: _aktifOturum.mesajlar.isEmpty
                 ? _bosEkranTasarimi()
                 : ListView.builder(
+                    // 🌟 DÜZELTİLDİ: CONTROLLER VE KAYDIRMA AYARLARI ANA EKRANDA!
                     controller: _scrollKontrolcusu,
+                    physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()), 
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag, 
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
                     itemCount: _aktifOturum.mesajlar.length,
                     itemBuilder: (context, index) {
@@ -739,7 +734,6 @@ Future<void> _mesajGonder() async {
                     ),
                   ),
 
-                  // 🌟 ADIM 5: Gönder/Durdur Butonu
                   Container(
                     margin: const EdgeInsets.only(bottom: 2),
                     decoration: BoxDecoration(
@@ -748,17 +742,16 @@ Future<void> _mesajGonder() async {
                     ),
                     child: IconButton(
                       icon: Icon(
-                        _yukleniyor ? Icons.stop : Icons.arrow_upward_rounded, // Icons.stop daha şık durur
+                        _yukleniyor ? Icons.stop : Icons.arrow_upward_rounded,
                         color: Colors.white,
                         size: 22,
                       ),
                       onPressed: _yukleniyor ? () {
-                        // 🛑 KULLANICI DURDURA BASTIĞINDA:
                         if (!(_apiCancelCompleter?.isCompleted ?? true)) {
                           _apiCancelCompleter?.complete();
                         }
-                        _httpClient?.close(); // Sunucuyla olan bağlantıyı BİTİR (İnternet tasarrufu)
-                        setState(() => _yukleniyor = false); // Butonu anında normale çevir
+                        _httpClient?.close(); 
+                        setState(() => _yukleniyor = false); 
                       } : _mesajGonder,
                     ),
                   ),
@@ -786,6 +779,66 @@ Future<void> _mesajGonder() async {
           const SizedBox(height: 10),
           const Text("Seyahat rotaları, biletler ve daha fazlası...", style: TextStyle(color: Colors.grey)),
         ],
+      ),
+    );
+  }
+
+  Widget _sehirResimKutusuCiz(List<String> resimler) {
+    String kapakFotografi = resimler[0];
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TamEkranGaleri(resimler: resimler, baslangicIndex: 0),
+          ),
+        );
+      },
+      child: Container(
+        width: double.infinity,
+        height: 200, 
+        margin: const EdgeInsets.only(top: 8, bottom: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6, offset: const Offset(0, 3))
+          ]
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                kapakFotografi,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+              ),
+              if (resimler.length > 1)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.photo_library, color: Colors.white, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          "1/${resimler.length}", 
+                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -834,7 +887,7 @@ Future<void> _mesajGonder() async {
                           children: [
                             MarkdownBody(
                               data: mesaj.metin,
-                              selectable: true,
+                              selectable: false, // 🌟 KİLİT NOKTA: METİN SEÇİMİ KAPALI!
                               styleSheet: MarkdownStyleSheet(
                                 p: const TextStyle(color: Color(0xFF374151), fontSize: 16, height: 1.6),
                                 strong: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF111827), fontSize: 16),
@@ -854,7 +907,7 @@ Future<void> _mesajGonder() async {
                                 ),
                               ),
                             ),
-                            // 🌟 YENİ: Hava Durumu Kartlarını Ekrana Çizdir
+                            
                             if (mesaj.havaDurumu != null && mesaj.havaDurumu!.isNotEmpty)
                               ...mesaj.havaDurumu!.map((hava) => HavaDurumuKarti(
                                 sehir: hava['sehir'] ?? 'Bilinmiyor',
@@ -862,6 +915,7 @@ Future<void> _mesajGonder() async {
                                 durum: hava['durum'] ?? '-',
                                 tarih: hava['tarih'] ?? '',
                               )).toList(),
+
                             if (mesaj.ucuslar != null && mesaj.ucuslar!.isNotEmpty)
                               ...mesaj.ucuslar!.map((ucus) => UcusKarti(
                                     havayolu: ucus['havayolu'] ?? 'Bilinmiyor',
@@ -872,13 +926,10 @@ Future<void> _mesajGonder() async {
                                     fiyat: ucus['fiyat'] ?? '₺0',
                                     tarih: ucus['tarih'] ?? '', 
                                   )).toList(),
-                              
                           ],
-                          
                         ),
                 ),
                 
-                // 🌟 YENİ: Harita ve Unsplash Galeri Gösterimi
                 if (bulunanSehirler.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Wrap(
@@ -897,88 +948,32 @@ Future<void> _mesajGonder() async {
                   ),
                   const SizedBox(height: 8),
                   
-                  // 🌟 YENİ: Sohbet ekranında tek resim, tıklandığında kaydırmalı galeri
-                  ...bulunanSehirler.map((sehir) => FutureBuilder<List<String>?>(
-                    future: _sehirFotograflariGetir(sehir),
-                    builder: (context, snapshot) {
-                      // Yükleniyor durumu
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16.0),
-                          child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3B82F6))),
-                        );
-                      } 
-                      // 🌟 GÜNCELLEME: Sadece tek bir kapak fotoğrafı göster
-                      else if (snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty) {
-                        List<String> resimler = snapshot.data!;
-                        String kapakFotografi = resimler[0]; // Sadece ilkini (en popüler) alıyoruz
-                        
-                        return GestureDetector(
-                          onTap: () {
-                            // Tıklanınca tüm fotoğrafları siyah ekranlı galeriye gönder
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => TamEkranGaleri(
-                                  resimler: resimler, // Tüm listeyi gönderiyoruz ki kaydırılabilsin
-                                  baslangicIndex: 0,
-                                ),
-                              ),
-                            );
-                          },
-                          child: Container(
+                  ...bulunanSehirler.map((sehir) {
+                    if (_sehirResimleri.containsKey(sehir) && _sehirResimleri[sehir]!.isNotEmpty) {
+                      return _sehirResimKutusuCiz(_sehirResimleri[sehir]!);
+                    }
+                    return FutureBuilder<List<String>?>(
+                      future: _sehirFotograflariGetir(sehir),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return Container(
                             width: double.infinity,
-                            height: 200, // Chat ekranında daha doyurucu durması için büyüttük
+                            height: 200, 
                             margin: const EdgeInsets.only(top: 8, bottom: 8),
                             decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
                               borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6, offset: const Offset(0, 3))
-                              ]
                             ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  // Kapak Fotoğrafı
-                                  Image.network(
-                                    kapakFotografi,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
-                                  ),
-                                  // 🌟 YENİ: Sağ üst köşeye "Albüm" ikonu ve sayısı (Instagram stili)
-                                  if (resimler.length > 1)
-                                    Positioned(
-                                      right: 8,
-                                      top: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withOpacity(0.6),
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            const Icon(Icons.photo_library, color: Colors.white, size: 14),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              "1/${resimler.length}", 
-                                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    },
-                  )).toList(),
+                            child: const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3B82F6))),
+                          );
+                        }
+                        if (snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty) {
+                          return _sehirResimKutusuCiz(snapshot.data!);
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    );
+                  }).toList(),
                 ],
 
                 if (!isUser && !_yukleniyor) ...[
@@ -1024,7 +1019,7 @@ Future<void> _mesajGonder() async {
                       ),
                     ],
                   ),
-                ] else ...[
+                ] else if (isUser && !_yukleniyor) ...[
                   const SizedBox(height: 8),
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1174,7 +1169,6 @@ class UcusKarti extends StatelessWidget {
   }
 }
 
-// 🌟 YENİ: Tam Ekran Fotoğraf Galerisi (Albüm) Sınıfı
 class TamEkranGaleri extends StatefulWidget {
   final List<String> resimler;
   final int baslangicIndex;
@@ -1214,7 +1208,7 @@ class _TamEkranGaleriState extends State<TamEkranGaleri> {
         controller: _pageController,
         itemCount: widget.resimler.length,
         itemBuilder: (context, index) {
-          return InteractiveViewer( // Parmakla zoom (yakınlaştırma) özelliği
+          return InteractiveViewer( 
             minScale: 0.5,
             maxScale: 4.0,
             child: Center(
@@ -1233,7 +1227,7 @@ class _TamEkranGaleriState extends State<TamEkranGaleri> {
     );
   }
 }
-// 🌟 YENİ: Şık Hava Durumu Kartı Widget'ı
+
 class HavaDurumuKarti extends StatelessWidget {
   final String sehir;
   final String sicaklik;
@@ -1261,7 +1255,7 @@ class HavaDurumuKarti extends StatelessWidget {
     String d = durum.toLowerCase();
     if (d.contains('güneş') || d.contains('açık')) return Colors.orangeAccent;
     if (d.contains('yağmur') || d.contains('sağanak')) return Colors.blueGrey;
-    return Colors.lightBlue; // Varsayılan
+    return Colors.lightBlue; 
   }
 
   @override
