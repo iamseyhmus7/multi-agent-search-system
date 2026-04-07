@@ -27,7 +27,8 @@ async def get_access_token():
 async def search_flights(origin, destination, date):
     token = await get_access_token()
 
-    async with httpx.AsyncClient() as client:
+    # 👇 İŞTE BURASI: Süreyi 30 saniyeye çıkardık 👇
+    async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{BASE_URL}/v2/shopping/flight-offers",
             headers={"Authorization": f"Bearer {token}"},
@@ -39,5 +40,9 @@ async def search_flights(origin, destination, date):
                 "max": 5
             },
         )
-
+        # 🧪 Hata Ayıklama Logu
+        print(f"DEBUG: Amadeus Status Code: {response.status_code}")
+        if response.status_code != 200:
+            print(f"DEBUG: Amadeus Error Content: {response.text}")
+            
         return response.json()
